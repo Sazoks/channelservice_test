@@ -5,4 +5,4 @@ from django.utils.translation import gettext_lazy as _
 class GooglesheetsObserverConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'googlesheets_observer'
-    verbose_name = f"{_('Обработчик')} Google Sheets"
+    verbose_name = _('Обработчик Google Sheets')

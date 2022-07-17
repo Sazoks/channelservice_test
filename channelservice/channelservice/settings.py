@@ -50,6 +50,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    # Installed apps.
+    'rest_framework',
+
     # My apps.
     'googlesheets_observer',
 ]
@@ -143,3 +146,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Настройки очереди задач Celery.
+CELERY_BROKER_URL = config('RABBITMQ_URL')

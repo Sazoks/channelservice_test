@@ -152,17 +152,19 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # FIXME: Важно, без этого на винде не работает.
 #  pip install eventlet
 #  celery -A proj worker -l info -P eventlet
-CELERY_BROKER_URL = config('REDIS_URL') + '/0'
+CELERY_BROKER_URL = config('BROKER_URL')
 CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600}
-CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_ACCEPT_CONTENT = ('application/json', )
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_BEAT_SCHEDULE = {
     'googlesheets-observer-every-5-minutes': {
-        # 'task': 'channelservice.googlesheets_observer',
-        'task': 'googlesheets.tasks.test',
+        'task': 'googlesheets.tasks.observe_google_sheets',
         'schedule': 10,  # 300 секунд == 5 минут.
+        'args': (
+            config('GS_SPREADSHEET_ID'),
+            config('GS_RANGE_NAME'),
+        ),
     },
 }
 CELERY_EAGER_PROPAGATES_EXCEPTIONS = True

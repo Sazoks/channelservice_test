@@ -1,21 +1,17 @@
-import httplib2
-import requests
-from typing import (
-    List,
-    Dict,
-    Any,
-    Optional,
-)
-from celery import Task, shared_task
-from decimal import Decimal
-from decouple import config
-from datetime import datetime
-from bs4 import BeautifulSoup
-from django.conf import settings
-from googleapiclient.discovery import build
-from oauth2client.service_account import ServiceAccountCredentials
+from celery import shared_task
 
-from channelservice import celery_app
+from .observers import OrderObserver
 
 
+@shared_task
+def observe_google_sheets(spreadsheet_id: str, range_name: str) -> None:
+    """
+    Задание на мониторинг и обработку указанной Google Sheet.
 
+    :param spreadsheet_id: id таблицы в Google Sheets.
+    :param range_name:
+        Диапазон ячеек, из которых необходимо считывать значения.
+    """
+
+    observer = OrderObserver(spreadsheet_id, range_name)
+    observer.run()

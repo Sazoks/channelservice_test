@@ -4,5 +4,5 @@ from django.urls import (
 )
 
 urlpatterns = [
-    path('googlesheets-observer/', include('api.googlesheets_observer.urls')),
+    path('googlesheets/', include('api.googlesheets.urls')),
 ]

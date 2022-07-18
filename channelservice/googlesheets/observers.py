@@ -14,7 +14,10 @@ from django.conf import settings
 from googleapiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
+from .models import Order
 
+
+# FIXME: Вынести логику обновления курса валют в отдельную таску.
 class OrderObserver:
     """
     Класс для мониторинга и обработки заказов из Google Sheets.
@@ -28,13 +31,19 @@ class OrderObserver:
         4. ...
     """
 
-    def __init__(self) -> None:
-        """Инициализатор класса"""
+    def __init__(self, spreadsheet_id: str, range_name: str) -> None:
+        """
+        Инициализатор класса.
+
+        :param spreadsheet_id: id таблицы в Google Sheets.
+        :param range_name:
+            Диапазон ячеек, из которых необходимо считывать значения.
+        """
 
         # Настройка параметров для работы с Google Cloud.
         self.__gs_scopes: str = config('GS_SCOPES')
-        self.__gs_spreadsheet_id: str = config('GS_SPREADSHEET_ID')
-        self.__gs_range_name: str = config('GS_RANGE_NAME')
+        self.__gs_spreadsheet_id = spreadsheet_id
+        self.__gs_range_name = range_name
 
         # Шаблон URL для получения валют. Для запроса необходимо подставить
         # через .format() дату формата dd/mm/yy.
@@ -55,10 +64,28 @@ class OrderObserver:
         # Получаем строки таблицы.
         values: Optional[List[List[str]]] = result.get('values', None)
         if values is None:
+            # TODO: Сделать проверку данных.
             ...
 
         # Получаем курс доллара к рублю на сегодняшний день.
         dollars_to_rubs = self._get_dollars_to_rubs()
+
+        # FIXME: Исправить инициализацию.
+        new_orders = [
+            Order(
+                number=int(row[0]),
+                order_number=int(row[1]),
+                dollars=float(row[2]),
+                delivery_time=datetime.strptime(row[3], '%d.%m.%Y'),
+                rubles=Decimal(float(row[2])) * dollars_to_rubs,
+            )
+            for i, row in enumerate(values) if i != 0
+        ]
+        print(new_orders)
+
+        # TODO: Сделать проверки на удаленные строки, измененные строки,
+        #  новые строки.
+        Order.objects.bulk_create(new_orders)
 
     def _get_service_account(self):
         """
@@ -77,6 +104,7 @@ class OrderObserver:
         creds_service = ServiceAccountCredentials \
             .from_json_keyfile_name(creds_json, scopes) \
             .authorize(httplib2.Http())
+
         # Создание объекта подключения к облаку на основе учетных данных
         # сервисного аккаунта.
         service = build(serviceName='sheets', version='v4', http=creds_service)
@@ -100,7 +128,7 @@ class OrderObserver:
         # Строим DOM-дерево и парсим значение доллара.
         root = BeautifulSoup(xml_content, 'xml')
         dollars_to_rubs = Decimal(
-            root.find('Valute', attrs={'ID': 'R1235'})
+            root.find('Valute', attrs={'ID': 'R01235'})
                 .find('Value').text.replace(',', '.')
         )
 

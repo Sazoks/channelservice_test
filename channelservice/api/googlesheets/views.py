@@ -1,6 +1,6 @@
 from rest_framework.generics import ListAPIView
 
-from googlesheets_observer.models import Order
+from googlesheets.models import Order
 from .serializers import OrderSerializer
 
 

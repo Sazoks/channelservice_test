@@ -54,7 +54,7 @@ INSTALLED_APPS = [
     'rest_framework',
 
     # My apps.
-    'googlesheets_observer',
+    'googlesheets',
 ]
 
 MIDDLEWARE = [
@@ -149,4 +149,20 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # Настройки очереди задач Celery.
-CELERY_BROKER_URL = config('RABBITMQ_URL')
+# FIXME: Важно, без этого на винде не работает.
+#  pip install eventlet
+#  celery -A proj worker -l info -P eventlet
+CELERY_BROKER_URL = config('REDIS_URL') + '/0'
+CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600}
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+CELERY_ACCEPT_CONTENT = ('application/json', )
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_BEAT_SCHEDULE = {
+    'googlesheets-observer-every-5-minutes': {
+        # 'task': 'channelservice.googlesheets_observer',
+        'task': 'googlesheets.tasks.test',
+        'schedule': 10,  # 300 секунд == 5 минут.
+    },
+}
+CELERY_EAGER_PROPAGATES_EXCEPTIONS = True

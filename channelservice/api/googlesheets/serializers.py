@@ -1,6 +1,6 @@
 from rest_framework.serializers import ModelSerializer
 
-from googlesheets_observer.models import Order
+from googlesheets.models import Order
 
 
 class OrderSerializer(ModelSerializer):

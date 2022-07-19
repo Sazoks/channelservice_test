@@ -52,12 +52,14 @@ INSTALLED_APPS = [
 
     # Installed apps.
     'rest_framework',
+    'corsheaders',
 
     # My apps.
     'googlesheets',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -148,15 +150,18 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# Настройки CORS.
+CORS_ORIGIN_ALLOW_ALL = False
+CORS_ORIGIN_WHITELIST = (
+    'http://localhost:3000',
+)
+
+
 # Настройки очереди задач Celery.
 # FIXME: Важно, без этого на винде не работает.
 #  pip install eventlet
 #  celery -A proj worker -l info -P eventlet
 CELERY_BROKER_URL = config('BROKER_URL')
-CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600}
-CELERY_ACCEPT_CONTENT = ('application/json', )
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
 CELERY_BEAT_SCHEDULE = {
     'googlesheets-observer-every-5-minutes': {
         'task': 'googlesheets.tasks.observe_google_sheets',
@@ -167,4 +172,3 @@ CELERY_BEAT_SCHEDULE = {
         ),
     },
 }
-CELERY_EAGER_PROPAGATES_EXCEPTIONS = True

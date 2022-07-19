@@ -1,5 +1,6 @@
 import httplib2
 import requests
+import httplib2shim
 from typing import (
     List,
     Dict,
@@ -49,6 +50,7 @@ class OrderObserver:
         # через .format() дату формата dd/mm/yy.
         self.__cbr_currencies_url: str = config('CBR_CURRENCIES_URL')
 
+        httplib2shim.patch()
         # Получаем объект сервисного аккаунта для работы с API.
         self.__service = self._get_service_account()
 
@@ -61,11 +63,18 @@ class OrderObserver:
             range=self.__gs_range_name,
         ).execute()
 
-        # Получаем строки таблицы.
-        values: Optional[List[List[str]]] = result.get('values', None)
-        if values is None:
+        # Получаем данные из таблицы.
+        # 1-й элемент - заголовки вида ['title_1', 'title_2', ...].
+        # Остальные элементы - данные вида ['value_1', 'value_2', ...].
+        data: Optional[List[List[str]]] = result.get('values', None)
+        if data is None:
             # TODO: Сделать проверку данных.
             ...
+
+        # Удаляем строку с заголовками.
+        
+        # Получаем только валидные данные. Их и будем записывать в БД.
+        data = self._get_validated_data(data)
 
         # Получаем курс доллара к рублю на сегодняшний день.
         dollars_to_rubs = self._get_dollars_to_rubs()
@@ -86,6 +95,20 @@ class OrderObserver:
         # TODO: Сделать проверки на удаленные строки, измененные строки,
         #  новые строки.
         Order.objects.bulk_create(new_orders)
+
+    def _get_validated_data(self, data: List[List[str]]) -> List[List[str]]:
+        """
+        Метод валидации данных из таблицы.
+
+        Создает новый список только с валидными строками таблицы.
+        Валидная строка - строка, в которой каждое значение валидное.
+
+        :param data: Исходные данные из таблицы.
+        :return: Провалидированный список данных.
+        """
+
+        validated_data: List[List[str]] = []
+
 
     def _get_service_account(self):
         """

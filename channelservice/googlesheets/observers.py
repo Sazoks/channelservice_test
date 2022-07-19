@@ -1,5 +1,9 @@
 import httplib2
 import requests
+from enum import (
+    IntEnum,
+    auto,
+)
 import httplib2shim
 from typing import (
     List,
@@ -12,13 +16,13 @@ from decouple import config
 from datetime import datetime
 from bs4 import BeautifulSoup
 from django.conf import settings
+from django.db import transaction
 from googleapiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
 from .models import Order
 
 
-# FIXME: Вынести логику обновления курса валют в отдельную таску.
 class OrderObserver:
     """
     Класс для мониторинга и обработки заказов из Google Sheets.
@@ -26,11 +30,20 @@ class OrderObserver:
     Алгоритм работы:
         1. При инициализации настраивает объект сервисного аккаунта,
         через который происходит общение с API Google Sheets.
-        2. Делает запрос всех занчений на указанную таблицу.
-        3. Делает запрос к API ЦБ за курсом доллара к рублю на
-        сегодняшний день.
-        4. ...
+        2. Делает запрос всех значений на указанную таблицу.
+        3. Формирует список валют под каждую уникальную дату из таблицы.
+        4. Создает список объектов заказов.
+        5. Удаляет все заказы из БД и записывает новые заказы, все в одной
+        транзакции.
     """
+
+    class ColumnIndex(IntEnum):
+        """Индексы столбцов таблицы"""
+
+        NUMBER = 0
+        ORDER_NUMBER = auto()
+        DOLLARS = auto()
+        DELIVERY_TIME = auto()
 
     def __init__(self, spreadsheet_id: str, range_name: str) -> None:
         """
@@ -41,21 +54,30 @@ class OrderObserver:
             Диапазон ячеек, из которых необходимо считывать значения.
         """
 
+        # Шаблон URL для получения валют. Для запроса необходимо подставить
+        # через .format() дату формата dd/mm/yy.
+        self.__cbr_currencies_url: str = config('CBR_CURRENCIES_URL')
+
         # Настройка параметров для работы с Google Cloud.
         self.__gs_scopes: str = config('GS_SCOPES')
         self.__gs_spreadsheet_id = spreadsheet_id
         self.__gs_range_name = range_name
 
-        # Шаблон URL для получения валют. Для запроса необходимо подставить
-        # через .format() дату формата dd/mm/yy.
-        self.__cbr_currencies_url: str = config('CBR_CURRENCIES_URL')
-
+        # Автоматически настраиваем все объекты http. Без этого аутентификация
+        # в Google Cloud из Celery-воркера не работает.
         httplib2shim.patch()
+
         # Получаем объект сервисного аккаунта для работы с API.
         self.__service = self._get_service_account()
 
     def run(self) -> None:
         """Запуск обработчика таблицы"""
+
+        # FIXME: Оптимизировать логику работы с БД.
+        #  - удалять дубликаты дат, формировать список валют под каждую
+        #  уникальную дату. Это уменьшит число запросов к API ЦБ.
+        # FIXME: Добавить обработку исключений при создании объектов заказов
+        #  и при отправке запроса на создание в БД.
 
         # Делаем запрос к указанной таблице на указанный диапазон.
         result: Dict[str, Any] = self.__service.spreadsheets().values().get(
@@ -64,51 +86,32 @@ class OrderObserver:
         ).execute()
 
         # Получаем данные из таблицы.
-        # 1-й элемент - заголовки вида ['title_1', 'title_2', ...].
-        # Остальные элементы - данные вида ['value_1', 'value_2', ...].
         data: Optional[List[List[str]]] = result.get('values', None)
         if data is None:
-            # TODO: Сделать проверку данных.
-            ...
+            # TODO: Сделать логирование.
+            return
 
-        # Удаляем строку с заголовками.
-        
-        # Получаем только валидные данные. Их и будем записывать в БД.
-        data = self._get_validated_data(data)
+        # Удаляем заголовки из данных. Они не нужны.
+        data.pop(0)
 
-        # Получаем курс доллара к рублю на сегодняшний день.
-        dollars_to_rubs = self._get_dollars_to_rubs()
-
-        # FIXME: Исправить инициализацию.
-        new_orders = [
-            Order(
-                number=int(row[0]),
-                order_number=int(row[1]),
-                dollars=float(row[2]),
-                delivery_time=datetime.strptime(row[3], '%d.%m.%Y'),
-                rubles=Decimal(float(row[2])) * dollars_to_rubs,
+        # Создаем новые объекты заказов из таблицы.
+        updated_orders = []
+        for row in data:
+            delivery_time = datetime.strptime(row[self.ColumnIndex.DELIVERY_TIME], '%d.%m.%Y')
+            dollars_to_rubs = self._get_dollars_to_rubs(delivery_time)
+            new_order = Order(
+                number=int(row[self.ColumnIndex.NUMBER]),
+                order_number=int(row[self.ColumnIndex.ORDER_NUMBER]),
+                dollars=float(row[self.ColumnIndex.DOLLARS]),
+                delivery_time=delivery_time,
+                rubles=Decimal(row[self.ColumnIndex.DOLLARS]) * dollars_to_rubs
             )
-            for i, row in enumerate(values) if i != 0
-        ]
-        print(new_orders)
+            updated_orders.append(new_order)
 
-        # TODO: Сделать проверки на удаленные строки, измененные строки,
-        #  новые строки.
-        Order.objects.bulk_create(new_orders)
-
-    def _get_validated_data(self, data: List[List[str]]) -> List[List[str]]:
-        """
-        Метод валидации данных из таблицы.
-
-        Создает новый список только с валидными строками таблицы.
-        Валидная строка - строка, в которой каждое значение валидное.
-
-        :param data: Исходные данные из таблицы.
-        :return: Провалидированный список данных.
-        """
-
-        validated_data: List[List[str]] = []
-
+        # Обновляем данные в одной транзакции.
+        with transaction.atomic():
+            Order.objects.all().delete()
+            Order.objects.bulk_create(updated_orders)
 
     def _get_service_account(self):
         """
@@ -134,15 +137,16 @@ class OrderObserver:
 
         return service
 
-    def _get_dollars_to_rubs(self) -> Decimal:
+    def _get_dollars_to_rubs(self, date: datetime.date) -> Decimal:
         """
-        Получение курса доллара к рублю на сегодняшний день.
+        Получение курса доллара к рублю на указанный день.
 
+        :param date: День, за который нужно получить курс доллара.
         :return: Объект Decimal с точным значением курса доллара к рублю.
         """
 
         # Получаем сегодняшнюю дату и переводим в нужный формат.
-        date_for_request = datetime.now().date().strftime('%d/%m/%Y')
+        date_for_request = date.strftime('%d/%m/%Y')
         # Делаем запрос к API ЦБ.
         response = requests.get(self.__cbr_currencies_url.format(date_for_request))
 

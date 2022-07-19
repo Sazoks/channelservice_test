@@ -35,6 +35,7 @@ class Order(models.Model):
 
         verbose_name = _('Заказ')
         verbose_name_plural = _('Заказы')
+        ordering = ('delivery_time', )
 
     def __str__(self) -> str:
         """Строковое представление объекта"""

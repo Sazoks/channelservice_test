@@ -4,7 +4,7 @@ from .observers import OrderObserver
 
 
 @shared_task
-def observe_google_sheets(spreadsheet_id: str, range_name: str) -> None:
+def observe_order(spreadsheet_id: str, range_name: str) -> None:
     """
     Задание на мониторинг и обработку указанной Google Sheet.
 

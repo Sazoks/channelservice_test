@@ -158,14 +158,11 @@ CORS_ORIGIN_WHITELIST = (
 
 
 # Настройки очереди задач Celery.
-# FIXME: Важно, без этого на винде не работает.
-#  pip install eventlet
-#  celery -A proj worker -l info -P eventlet
 CELERY_BROKER_URL = config('BROKER_URL')
 CELERY_BEAT_SCHEDULE = {
     'googlesheets-observer-every-5-minutes': {
-        'task': 'googlesheets.tasks.observe_google_sheets',
-        'schedule': 10,  # 300 секунд == 5 минут.
+        'task': 'googlesheets.tasks.observe_order',
+        'schedule': 30,  # 300 секунд == 5 минут.
         'args': (
             config('GS_SPREADSHEET_ID'),
             config('GS_RANGE_NAME'),

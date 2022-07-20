@@ -11,6 +11,7 @@ from typing import (
     Dict,
     Any,
     Optional,
+    Set,
 )
 from decimal import Decimal
 from decouple import config
@@ -24,10 +25,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 from .models import Order
 
 
-class DeliveryTimeChecker:
+class OrderReportSender:
     """
     Класс для формирования отчета о просроченных заказах
-    и отправки его разрешенным пользователям.
+    и отправки его разрешенным пользователям в Telegram.
     """
 
     def __init__(self, expired_orders: Optional[List[Order]] = None) -> None:
@@ -39,7 +40,7 @@ class DeliveryTimeChecker:
             if expired_orders is not None else []
 
     def send_message(self) -> None:
-        """Формирование и отправка уведомленя о просроченных заказах"""
+        """Формирование и отправка отчета о просроченных заказах"""
 
         if len(self.__expired_orders) > 0:
             # Формирование сообщения.
@@ -79,7 +80,7 @@ class OrderObserver:
     """
 
     class ColumnIndex(IntEnum):
-        """Индексы столбцов таблицы"""
+        """Индексы столбцов в Google-таблице"""
 
         NUMBER = 0
         ORDER_NUMBER = auto()
@@ -156,94 +157,143 @@ class OrderObserver:
             # 2. Не делать лишние запросы для заказов, которые не менялись.
             date_to_dollars_dict: Dict[datetime.date, Decimal] = {}
 
-            maybe_updating_orders = Order.objects\
-                .filter(order_number__in=updating_order_numbers)
-            updated_orders: List[Order] = []
-
-            for order in maybe_updating_orders:
-                # Получим табличные значения.
-                table_number = int(
-                    data_dict[order.order_number][self.ColumnIndex.NUMBER])
-                table_dollars = Decimal(
-                    data_dict[order.order_number][self.ColumnIndex.DOLLARS])
-                table_date = datetime.strptime(
-                    data_dict[order.order_number]
-                    [self.ColumnIndex.DELIVERY_TIME],
-                    '%d.%m.%Y',
-                ).date()
-
-                changed = False
-
-                # Обновляем данные, если нужно.
-                if order.number != table_number:
-                    order.number = table_number
-                    changed = True
-
-                if order.dollars != table_dollars \
-                        or order.delivery_time != table_date:
-                    # Сначала проверим курс в словаре.
-                    dollars_per_date = date_to_dollars_dict.get(table_date, None)
-
-                    # Если нет, запросим его у API ЦБ и добавим в словарь.
-                    if dollars_per_date is None:
-                        dollars_per_date = self._get_dollars_to_rubs(table_date)
-                        date_to_dollars_dict[table_date] = dollars_per_date
-
-                    # Обновим все значения.
-                    order.dollars = table_dollars
-                    order.delivery_time = table_date
-                    order.rubles = table_dollars * dollars_per_date
-                    changed = True
-
-                if changed:
-                    updated_orders.append(order)
-
-            # Обновляем заказы.
-            Order.objects.bulk_update(
-                updated_orders,
-                ['number', 'dollars', 'delivery_time', 'rubles'],
+            # Обновление заказов, которые нужно обновить.
+            self._update_orders(
+                data_dict,
+                updating_order_numbers,
+                date_to_dollars_dict,
             )
 
-            # Создаем новые объекты заказов из таблицы.
-            new_orders = []
-            # Объект, отвечающий за формирование отчета о просроченных заказах.
-            delivery_checker = DeliveryTimeChecker()
+            # Создаем новые заказы.
+            self._create_orders(
+                data_dict,
+                new_order_numbers,
+                date_to_dollars_dict,
+            )
 
-            for new_order_number in new_order_numbers:
-                # Получим табличные значения.
-                table_number = int(
-                    data_dict[new_order_number][self.ColumnIndex.NUMBER])
-                table_order_number = int(
-                    data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
-                table_dollars = Decimal(
-                    data_dict[new_order_number][self.ColumnIndex.DOLLARS])
-                table_date = datetime.strptime(
-                    data_dict[new_order_number][self.ColumnIndex.DELIVERY_TIME],
-                    '%d.%m.%Y',
-                ).date()
-                new_rubles = table_dollars * date_to_dollars_dict.get(
-                    table_date,
-                    self._get_dollars_to_rubs(table_date),
-                )
+    def _create_orders(
+            self,
+            data_dict: Dict[int, List[str]],
+            new_order_numbers: Set[int],
+            date_to_dollars_dict: Dict[datetime.date, Decimal],
+    ) -> None:
+        """
+        Добавление новых заказов.
 
-                # Создаем новый заказ и добавляем в список.
-                new_order = Order(
-                    number=table_number,
-                    order_number=table_order_number,
-                    dollars=table_dollars,
-                    delivery_time=table_date,
-                    rubles=new_rubles,
-                )
-                new_orders.append(new_order)
+        Обновляет только те заказы, у которых изменились данные.
 
-                # Если заказ просрочен, сообщим об этом в telegram.
-                if new_order.delivery_time < datetime.now().date():
-                    delivery_checker.add_order(new_order)
+        :param data_dict: Словарь с данными из Google-таблицы.
+        :param new_order_numbers: Множество id новых заказов..
+        :param date_to_dollars_dict:
+            Словарь для сопоставления определенной даты и курсу доллара.
+        """
 
-            # Добавляем новые заказы.
-            Order.objects.bulk_create(new_orders)
-            # Отправляем отчет о просроченных заказах, если они есть.
-            delivery_checker.send_message()
+        # Создаем новые объекты заказов из таблицы.
+        new_orders = []
+        # Объект, отвечающий за формирование отчета о просроченных заказах.
+        order_report_sender = OrderReportSender()
+
+        for new_order_number in new_order_numbers:
+            # Получим табличные значения.
+            table_number = int(
+                data_dict[new_order_number][self.ColumnIndex.NUMBER])
+            table_order_number = int(
+                data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
+            table_dollars = Decimal(
+                data_dict[new_order_number][self.ColumnIndex.DOLLARS])
+            table_date = datetime.strptime(
+                data_dict[new_order_number][self.ColumnIndex.DELIVERY_TIME],
+                '%d.%m.%Y',
+            ).date()
+            new_rubles = table_dollars * date_to_dollars_dict.get(
+                table_date,
+                self._get_dollars_to_rubs(table_date),
+            )
+
+            # Создаем новый заказ и добавляем в список.
+            new_order = Order(
+                number=table_number,
+                order_number=table_order_number,
+                dollars=table_dollars,
+                delivery_time=table_date,
+                rubles=new_rubles,
+            )
+            new_orders.append(new_order)
+
+            # Если заказ просрочен, добавим его в отчет.
+            if new_order.delivery_time < datetime.now().date():
+                order_report_sender.add_order(new_order)
+
+        # Добавляем новые заказы.
+        Order.objects.bulk_create(new_orders)
+        # Отправляем отчет о просроченных заказах.
+        order_report_sender.send_message()
+
+    def _update_orders(
+            self,
+            data_dict: Dict[int, List[str]],
+            updating_order_numbers: Set[int],
+            date_to_dollars_dict: Dict[datetime.date, Decimal],
+    ) -> None:
+        """
+        Обновление заказов.
+
+        Обновляет только те заказы, у которых изменились данные.
+
+        :param data_dict: Словарь с данными из Google-таблицы.
+        :param updating_order_numbers:
+            Множество id заказов, которые, возможно, нужно обновить.
+        :param date_to_dollars_dict:
+            Словарь для сопоставления определенной даты и курсу доллара.
+        """
+
+        maybe_updating_orders = Order.objects \
+            .filter(order_number__in=updating_order_numbers)
+        updated_orders: List[Order] = []
+
+        for order in maybe_updating_orders:
+            # Получим табличные значения.
+            table_number = int(
+                data_dict[order.order_number][self.ColumnIndex.NUMBER])
+            table_dollars = Decimal(
+                data_dict[order.order_number][self.ColumnIndex.DOLLARS])
+            table_date = datetime.strptime(
+                data_dict[order.order_number]
+                [self.ColumnIndex.DELIVERY_TIME],
+                '%d.%m.%Y',
+            ).date()
+
+            changed = False
+
+            # Обновляем данные, если нужно.
+            if order.number != table_number:
+                order.number = table_number
+                changed = True
+
+            if order.dollars != table_dollars \
+                    or order.delivery_time != table_date:
+                # Сначала проверим курс в словаре.
+                dollars_per_date = date_to_dollars_dict.get(table_date, None)
+
+                # Если нет, запросим его у API ЦБ и добавим в словарь.
+                if dollars_per_date is None:
+                    dollars_per_date = self._get_dollars_to_rubs(table_date)
+                    date_to_dollars_dict[table_date] = dollars_per_date
+
+                # Обновим все значения.
+                order.dollars = table_dollars
+                order.delivery_time = table_date
+                order.rubles = table_dollars * dollars_per_date
+                changed = True
+
+            if changed:
+                updated_orders.append(order)
+
+        # Обновляем заказы.
+        Order.objects.bulk_update(
+            updated_orders,
+            ['number', 'dollars', 'delivery_time', 'rubles'],
+        )
 
     def _create_service_account(self):
         """
@@ -293,7 +343,7 @@ class OrderObserver:
         :return: Объект Decimal с точным значением курса доллара к рублю.
         """
 
-        # Получаем сегодняшнюю дату и переводим в нужный формат.
+        # Переводим дату в нужный для запроса формат.
         date_for_request = date.strftime('%d/%m/%Y')
         # Делаем запрос к API ЦБ.
         response = requests.get(self.__cbr_currencies_url.format(date_for_request))

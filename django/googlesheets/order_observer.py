@@ -180,8 +180,6 @@ class OrderObserver:
         """
         Добавление новых заказов.
 
-        Обновляет только те заказы, у которых изменились данные.
-
         :param data_dict: Словарь с данными из Google-таблицы.
         :param new_order_numbers: Множество id новых заказов..
         :param date_to_dollars_dict:

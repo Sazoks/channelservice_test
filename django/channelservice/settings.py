@@ -107,11 +107,14 @@ WSGI_APPLICATION = 'channelservice.wsgi.application'
 # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
 DATABASES = {
-    'default': config(
-        'DB_URL',
-        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
-        cast=db_url,
-    ),
+    'default': {
+        'ENGINE': config('SQL_ENGINE', default='django.db.backends.sqlite3'),
+        'NAME': config("SQL_DATABASE", default=BASE_DIR / 'db.sqlite3'),
+        'USER': config('SQL_USER', default='user'),
+        'PASSWORD': config('SQL_PASSWORD', default='password'),
+        'HOST': config('SQL_HOST', default='localhost'),
+        'PORT': config('SQL_PORT', '5432'),
+    }
 }
 
 
@@ -166,7 +169,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Настройки CORS.
 CORS_ORIGIN_ALLOW_ALL = False
 CORS_ORIGIN_WHITELIST = (
-    'http://localhost:3000',
+    'http://localhost:8080',
+    'http://localhost',
 )
 
 

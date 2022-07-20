@@ -1,6 +1,6 @@
 from celery import shared_task
 
-from .observers import OrderObserver
+from .order_observer import OrderObserver
 
 
 @shared_task

@@ -20,6 +20,15 @@ from dj_database_url import parse as db_url
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+CREDS_DIR = BASE_DIR / 'creds'
+
+# Токен телеграм-бота и id пользователей, кому можно отправлять отчеты.
+TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
+TELEGRAM_ACCESS_USER_ID = config(
+    'TELEGRAM_ACCESS_USER_ID',
+    cast=Csv(),
+)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -38,6 +47,8 @@ ALLOWED_HOSTS = config(
     default='127.0.0.1,0.0.0.0',
     cast=Csv(),
 )
+
+FILENAME_SERVICE_ACCOUNT_CREDS = config('GS_FILENAME_CREDS')
 
 
 # Application definition

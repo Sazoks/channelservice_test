@@ -17,6 +17,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from django.conf import settings
 from django.db import transaction
+from django.db.models import QuerySet
 from googleapiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -68,7 +69,7 @@ class OrderObserver:
         httplib2shim.patch()
 
         # Получаем объект сервисного аккаунта для работы с API.
-        self.__service = self._get_service_account()
+        self.__service = self._create_service_account()
 
     def run(self) -> None:
         """Запуск обработчика таблицы"""
@@ -94,17 +95,24 @@ class OrderObserver:
         # Удаляем заголовки из данных. Они не нужны.
         data.pop(0)
 
+        # Многие даты в данных повторяются. Делать запрос к API ЦБ ради
+        # повторных данных очень неэффективно. Сделаем запросы к API ЦБ только
+        # для уникальных дат.
+        date_to_dollars_dict = self._create_date_to_dollars_dict(data)
+
         # Создаем новые объекты заказов из таблицы.
         updated_orders = []
         for row in data:
-            delivery_time = datetime.strptime(row[self.ColumnIndex.DELIVERY_TIME], '%d.%m.%Y')
-            dollars_to_rubs = self._get_dollars_to_rubs(delivery_time)
+            delivery_time = datetime.strptime(
+                row[self.ColumnIndex.DELIVERY_TIME], '%d.%m.%Y'
+            ).date()
             new_order = Order(
                 number=int(row[self.ColumnIndex.NUMBER]),
                 order_number=int(row[self.ColumnIndex.ORDER_NUMBER]),
-                dollars=float(row[self.ColumnIndex.DOLLARS]),
+                dollars=Decimal(row[self.ColumnIndex.DOLLARS]),
                 delivery_time=delivery_time,
-                rubles=Decimal(row[self.ColumnIndex.DOLLARS]) * dollars_to_rubs
+                rubles=Decimal(row[self.ColumnIndex.DOLLARS])
+                       * date_to_dollars_dict[delivery_time]
             )
             updated_orders.append(new_order)
 
@@ -113,7 +121,7 @@ class OrderObserver:
             Order.objects.all().delete()
             Order.objects.bulk_create(updated_orders)
 
-    def _get_service_account(self):
+    def _create_service_account(self):
         """
         Получение сервисного аккаунта в качестве ресурса.
 
@@ -136,6 +144,33 @@ class OrderObserver:
         service = build(serviceName='sheets', version='v4', http=creds_service)
 
         return service
+
+    def _create_date_to_dollars_dict(self, data: List[List[str]]) \
+            -> Dict[datetime.date, Decimal]:
+        """
+        Создание словаря, который сопоставляет уникальные даты и курс
+        доллара к каждой дате.
+
+        :param data: Данные о заказах.
+        :return: Словарь с датой и курсом доллара за эту дату.
+        """
+
+        # Получаем все уникальные даты среди всех данных.
+        unique_dates = set([
+            datetime.strptime(row[self.ColumnIndex.DELIVERY_TIME], '%d.%m.%Y').date()
+            for row in data
+        ])
+
+        # Сделаем запрос к API ЦБ для каждой даты и узнам курсы доллара.
+        dollars_per_day = [
+            self._get_dollars_to_rubs(date) for date in unique_dates
+        ]
+
+        # Создадим словарь, который сопоставляет день и курс доллара
+        # за этот день.
+        result = dict(zip(unique_dates, dollars_per_day))
+
+        return result
 
     def _get_dollars_to_rubs(self, date: datetime.date) -> Decimal:
         """

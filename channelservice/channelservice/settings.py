@@ -20,7 +20,11 @@ from dj_database_url import parse as db_url
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Директория с учетными данными.
 CREDS_DIR = BASE_DIR / 'creds'
+
+# Имя файла с учетными данными. Должен находиться в папке CREDS_DIR.
+FILENAME_SERVICE_ACCOUNT_CREDS = config('GS_FILENAME_CREDS')
 
 # Токен телеграм-бота и id пользователей, кому можно отправлять отчеты.
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -47,8 +51,6 @@ ALLOWED_HOSTS = config(
     default='127.0.0.1,0.0.0.0',
     cast=Csv(),
 )
-
-FILENAME_SERVICE_ACCOUNT_CREDS = config('GS_FILENAME_CREDS')
 
 
 # Application definition
@@ -171,9 +173,9 @@ CORS_ORIGIN_WHITELIST = (
 # Настройки очереди задач Celery.
 CELERY_BROKER_URL = config('BROKER_URL')
 CELERY_BEAT_SCHEDULE = {
-    'googlesheets-observer-every-5-minutes': {
+    'googlesheets-order-observer-every-1-minutes': {
         'task': 'googlesheets.tasks.observe_order',
-        'schedule': 30,  # 300 секунд == 5 минут.
+        'schedule': 60,
         'args': (
             config('GS_SPREADSHEET_ID'),
             config('GS_RANGE_NAME'),

@@ -26,8 +26,8 @@ from .models import Order
 
 class DeliveryTimeChecker:
     """
-    Класс для формирования сообщения в telegram о
-    просроченных заказах.
+    Класс для формирования отчета о просроченных заказах
+    и отправки его разрешенным пользователям.
     """
 
     def __init__(self, expired_orders: Optional[List[Order]] = None) -> None:
@@ -50,7 +50,7 @@ class DeliveryTimeChecker:
                            f'Дата: {order.delivery_time} ' \
                            f'Цена: {order.dollars}\n'
 
-            # Отправка сообщеня.
+            # Отправка сообщений.
             for user_id in self.__access_user_id:
                 self.__bot.send_message(user_id, message)
 
@@ -81,10 +81,9 @@ class OrderObserver:
         1. При инициализации настраивает объект сервисного аккаунта,
         через который происходит общение с API Google Sheets.
         2. Делает запрос всех значений на указанную таблицу.
-        3. Формирует список валют под каждую уникальную дату из таблицы.
-        4. Создает список объектов заказов.
-        5. Удаляет все заказы из БД и записывает новые заказы, все в одной
-        транзакции.
+        3. Переводит данны в словарь, где ключ - номер заказа,
+        занчение - данные.
+        4.
     """
 
     class ColumnIndex(IntEnum):
@@ -132,7 +131,6 @@ class OrderObserver:
         # Получаем данные из таблицы.
         data: Optional[List[List[str]]] = result.get('values', None)
         if data is None:
-            # TODO: Сделать логирование.
             return
 
         # Удаляем заголовки из данных. Они не нужны.
@@ -172,10 +170,13 @@ class OrderObserver:
 
             for order in maybe_updating_orders:
                 # Получим табличные значения.
-                table_number = int(data_dict[order.order_number][self.ColumnIndex.NUMBER])
-                table_dollars = Decimal(data_dict[order.order_number][self.ColumnIndex.DOLLARS])
+                table_number = int(
+                    data_dict[order.order_number][self.ColumnIndex.NUMBER])
+                table_dollars = Decimal(
+                    data_dict[order.order_number][self.ColumnIndex.DOLLARS])
                 table_date = datetime.strptime(
-                    data_dict[order.order_number][self.ColumnIndex.DELIVERY_TIME],
+                    data_dict[order.order_number]
+                    [self.ColumnIndex.DELIVERY_TIME],
                     '%d.%m.%Y',
                 ).date()
 
@@ -186,7 +187,8 @@ class OrderObserver:
                     order.number = table_number
                     changed = True
 
-                if order.dollars != table_dollars or order.delivery_time != table_date:
+                if order.dollars != table_dollars \
+                        or order.delivery_time != table_date:
                     # Сначала проверим курс в словаре.
                     dollars_per_date = date_to_dollars_dict.get(table_date, None)
 
@@ -217,9 +219,12 @@ class OrderObserver:
 
             for new_order_number in new_order_numbers:
                 # Получим табличные значения.
-                table_number = int(data_dict[new_order_number][self.ColumnIndex.NUMBER])
-                table_order_number = int(data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
-                table_dollars = Decimal(data_dict[new_order_number][self.ColumnIndex.DOLLARS])
+                table_number = int(
+                    data_dict[new_order_number][self.ColumnIndex.NUMBER])
+                table_order_number = int(
+                    data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
+                table_dollars = Decimal(
+                    data_dict[new_order_number][self.ColumnIndex.DOLLARS])
                 table_date = datetime.strptime(
                     data_dict[new_order_number][self.ColumnIndex.DELIVERY_TIME],
                     '%d.%m.%Y',

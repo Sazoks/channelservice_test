@@ -36,7 +36,7 @@ class OrderReportSender:
 
         self.__access_user_id: List[str] = settings.TELEGRAM_ACCESS_USER_ID
         self.__bot = telebot.TeleBot(settings.TELEGRAM_TOKEN)
-        self.__expired_orders = expired_orders \
+        self.__expired_orders: List[Order] = expired_orders \
             if expired_orders is not None else []
 
     def send_message(self) -> None:
@@ -77,6 +77,25 @@ class OrderReportSender:
 class OrderObserver:
     """
     Класс для мониторинга и обработки заказов из Google Sheets.
+
+    Алгоритм работы:
+        1. Получает все данные из таблицы.
+        2. Формирует из данных словарь, чтобы можно было получать данные о
+        каком-либо заказе по номеру этого заказа.
+        3. Формирует множества номеров заказов для удаления, обновления
+        и создания:
+            - заказы, которые есть и в таблице, и в БД, могут быть обновлены;
+            - заказы, которые есть только в БД, должны быть удалены;
+            - заказы, которые есть только в таблице, должны быть добавлены.
+        4. Удаляет заказы, которые нужно удалить.
+        5. Далее создается пустой словарь. В этот словарь по ходу обработки
+        записей будут помещаться уникальные даты из таблицы и вычисляться для
+        этих дат курсы доллара. Это позволит избежать лишних запросов к API ЦБ
+        за курсом доллара за какую-то дату, т.к. в данной операции именно
+        это является самым дорогим по времени.
+        6. Обновляет только те записи, которые действительно изменились.
+        7. Создает новые записи и добавляет их в БД.
+        8. Отправляет отчет о синхронизации таблицы в Telegram.
     """
 
     class ColumnIndex(IntEnum):
@@ -148,13 +167,11 @@ class OrderObserver:
             Order.objects.filter(order_number__in=deleting_order_numbers).delete()
 
             # Создадим словарь уникальных дат и курсов доллара.
-            # Если обнаружим, что у какой-то записи были обновлены доллары
-            # или дата, сначала посмотрим в этом словаре, если нет, вычислим
-            # и добавим новую дату и курс доллара.
-            # Это позволит:
-            # 1. Не повторять запросы для одних и тех же дат, т.к. мы всегда
-            # сначала смотрим в словаре, и только потом делаем запрос, если нет.
-            # 2. Не делать лишние запросы для заказов, которые не менялись.
+            # Будем добавлять уникальные даты и курс доллара за эту дату
+            # в словарь. Если у какой-то записи будет та же дата, мы не будем
+            # делать запрос к API ЦБ, а просто возьмем курс из словаря за эту
+            # дату. Если в словаре нет какой-либо даты, просто запросим ее
+            # у ЦБ.
             date_to_dollars_dict: Dict[datetime.date, Decimal] = {}
 
             # Обновление заказов, которые нужно обновить.
@@ -170,62 +187,6 @@ class OrderObserver:
                 new_order_numbers,
                 date_to_dollars_dict,
             )
-
-    def _create_orders(
-            self,
-            data_dict: Dict[int, List[str]],
-            new_order_numbers: Set[int],
-            date_to_dollars_dict: Dict[datetime.date, Decimal],
-    ) -> None:
-        """
-        Добавление новых заказов.
-
-        :param data_dict: Словарь с данными из Google-таблицы.
-        :param new_order_numbers: Множество id новых заказов..
-        :param date_to_dollars_dict:
-            Словарь для сопоставления определенной даты и курсу доллара.
-        """
-
-        # Создаем новые объекты заказов из таблицы.
-        new_orders = []
-        # Объект, отвечающий за формирование отчета о просроченных заказах.
-        order_report_sender = OrderReportSender()
-
-        for new_order_number in new_order_numbers:
-            # Получим табличные значения.
-            table_number = int(
-                data_dict[new_order_number][self.ColumnIndex.NUMBER])
-            table_order_number = int(
-                data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
-            table_dollars = Decimal(
-                data_dict[new_order_number][self.ColumnIndex.DOLLARS])
-            table_date = datetime.strptime(
-                data_dict[new_order_number][self.ColumnIndex.DELIVERY_TIME],
-                '%d.%m.%Y',
-            ).date()
-            new_rubles = table_dollars * date_to_dollars_dict.get(
-                table_date,
-                self._get_dollars_to_rubs(table_date),
-            )
-
-            # Создаем новый заказ и добавляем в список.
-            new_order = Order(
-                number=table_number,
-                order_number=table_order_number,
-                dollars=table_dollars,
-                delivery_time=table_date,
-                rubles=new_rubles,
-            )
-            new_orders.append(new_order)
-
-            # Если заказ просрочен, добавим его в отчет.
-            if new_order.delivery_time < datetime.now().date():
-                order_report_sender.add_order(new_order)
-
-        # Добавляем новые заказы.
-        Order.objects.bulk_create(new_orders)
-        # Отправляем отчет о просроченных заказах.
-        order_report_sender.send_message()
 
     def _update_orders(
             self,
@@ -292,6 +253,62 @@ class OrderObserver:
             updated_orders,
             ['number', 'dollars', 'delivery_time', 'rubles'],
         )
+
+    def _create_orders(
+            self,
+            data_dict: Dict[int, List[str]],
+            new_order_numbers: Set[int],
+            date_to_dollars_dict: Dict[datetime.date, Decimal],
+    ) -> None:
+        """
+        Добавление новых заказов.
+
+        :param data_dict: Словарь с данными из Google-таблицы.
+        :param new_order_numbers: Множество id новых заказов.
+        :param date_to_dollars_dict:
+            Словарь для сопоставления определенной даты и курсу доллара.
+        """
+
+        # Создаем новые объекты заказов из таблицы.
+        new_orders: List[Order] = []
+        # Объект, отвечающий за формирование отчета о просроченных заказах.
+        order_report_sender = OrderReportSender()
+
+        for new_order_number in new_order_numbers:
+            # Получим табличные значения.
+            table_number = int(
+                data_dict[new_order_number][self.ColumnIndex.NUMBER])
+            table_order_number = int(
+                data_dict[new_order_number][self.ColumnIndex.ORDER_NUMBER])
+            table_dollars = Decimal(
+                data_dict[new_order_number][self.ColumnIndex.DOLLARS])
+            table_date = datetime.strptime(
+                data_dict[new_order_number][self.ColumnIndex.DELIVERY_TIME],
+                '%d.%m.%Y',
+            ).date()
+            new_rubles = table_dollars * date_to_dollars_dict.get(
+                table_date,
+                self._get_dollars_to_rubs(table_date),
+            )
+
+            # Создаем новый заказ и добавляем в список.
+            new_order = Order(
+                number=table_number,
+                order_number=table_order_number,
+                dollars=table_dollars,
+                delivery_time=table_date,
+                rubles=new_rubles,
+            )
+            new_orders.append(new_order)
+
+            # Если заказ просрочен, добавим его в отчет.
+            if new_order.delivery_time < datetime.now().date():
+                order_report_sender.add_order(new_order)
+
+        # Добавляем новые заказы.
+        Order.objects.bulk_create(new_orders)
+        # Отправляем отчет о просроченных заказах.
+        order_report_sender.send_message()
 
     def _create_service_account(self):
         """

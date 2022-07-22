@@ -66,6 +66,7 @@ docker-compose exec django python manage.py migrate --noinput
 
 ## *6. Для проверяющих
 Ссылка на таблицу: https://docs.google.com/spreadsheets/d/1F4Nk4tTa7DxxlPad96_9Rs2f4rTmD7NsEeOXvTKDFMY/edit#gid=781782714
+Ссылка на бота: https://t.me/channelservice_bot
 
 В архиве ```project_settings.zip``` находятся учетные данные от моего сервисного аккаунта Google Cloud, а также готовый файл с переменными окружения. 
 Выложил, чтобы Вам было проще запустить проект, просто положив два файлика в нужные места. 

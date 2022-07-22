@@ -10,26 +10,36 @@ function App() {
   const [max_dollars, setMaxDollars] = React.useState(0);
   const [total_dollars, setTotalDollars] = React.useState(0);
 
-  useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/googlesheets/orders/', {
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-       }
-    }).then(response => response.json())
-      .then(response => {
-        setOrders(response.orders);
-        let _max_dollars = max_dollars;
-        response.orders.forEach(element => {
-          let element_dollars = Number(element.dollars);
-          if (element_dollars > _max_dollars) {
-            _max_dollars = element_dollars;
+  const httpFetch = async () => {
+    const response = await fetch('http://127.0.0.1:8000/api/googlesheets/orders/', {
+        headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
           }
-        });
-        setMaxDollars(_max_dollars);
-        setTotalDollars(response.total_dollars);
-        setLoading(false);
-      })
+        }).then(response => response.json())
+          .then(response => {
+            setOrders(response.orders);
+            let _max_dollars = max_dollars;
+            response.orders.forEach(element => {
+              let element_dollars = Number(element.dollars);
+              if (element_dollars > _max_dollars) {
+                _max_dollars = element_dollars;
+              }
+            });
+            setMaxDollars(_max_dollars);
+            setTotalDollars(response.total_dollars);
+            setLoading(false);
+          });
+  }
+
+  useEffect(() => {
+    const link_interval = setInterval(async () => {
+      await httpFetch();
+    }, 3000);
+
+    return () => {
+      clearInterval(link_interval);
+    }
   }, []);
 
   return (
